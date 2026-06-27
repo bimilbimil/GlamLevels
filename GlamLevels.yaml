@@ -1,0 +1,14 @@
+{
+  "Author": "Asphodel",
+  "Name": "Glam Levels",
+  "InternalName": "GlamLevels",
+  "AssemblyVersion": "1.0.0.0",
+  "Description": "Snapshots your Penumbra mod priorities when a Glamourer design is applied, letting you restore them instantly when priorities drift.",
+  "ApplicableVersion": "any",
+  "DalamudApiLevel": 15,
+  "LoadPriority": 0,
+  "LoadRequiredState": 0,
+  "LoadSync": false,
+  "CanUnloadAsync": false,
+  "Punchline": "Save and restore Penumbra priorities per Glamourer design."
+}

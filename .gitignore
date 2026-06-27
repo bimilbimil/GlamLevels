@@ -1,0 +1,17 @@
+# Build output
+bin/
+obj/
+dist/
+
+# NuGet
+packages/
+*.lock.json
+
+# Visual Studio / Rider
+.vs/
+.idea/
+*.user
+*.suo
+
+# macOS
+.DS_Store
