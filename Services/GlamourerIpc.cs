@@ -18,10 +18,12 @@ namespace GlamLevels.Services
         private readonly IPluginLog _log;
         private readonly IChatGui _chat;
         private readonly Action<nint, int> _handler;
+        private readonly Action<nint, int, Guid> _handlerWithGuid;
 
         public bool DebugMode { get; set; } = false;
 
-        public event Action OnDesignApplied;
+        // Fires when a design is applied. Guid is the design if Glamourer provided it; Guid.Empty otherwise.
+        public event Action<Guid> OnDesignApplied;
 
         public GlamourerIpc(IDalamudPluginInterface pi, IPluginLog log, IChatGui chat)
         {
@@ -29,29 +31,79 @@ namespace GlamLevels.Services
             _log = log;
             _chat = chat;
             _handler = OnStateChanged;
+            _handlerWithGuid = OnStateChangedWithGuid;
             Subscribe();
         }
 
         private void Subscribe()
         {
+            // Subscribe to both event signatures — newer Glamourer includes the design GUID as a 3rd
+            // parameter; older Glamourer fires only (nint, int). Dalamud invokes only the matching one.
             try
             {
-                _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Subscribe(_handler);
-                _log.Info("[GlamLevels] Subscribed to {Label}", EventLabel);
+                _pi.GetIpcSubscriber<nint, int, Guid, object>(EventLabel).Subscribe(_handlerWithGuid);
+                _log.Info("[GlamLevels] Subscribed to {Label} (with GUID)", EventLabel);
             }
             catch (Exception ex)
             {
-                _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label}", EventLabel);
+                _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label} (with GUID)", EventLabel);
             }
+
+            try
+            {
+                _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Subscribe(_handler);
+                _log.Info("[GlamLevels] Subscribed to {Label} (2-param fallback)", EventLabel);
+            }
+            catch (Exception ex)
+            {
+                _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label} (2-param)", EventLabel);
+            }
+        }
+
+        private void OnStateChangedWithGuid(nint objectPtr, int changeType, Guid designGuid)
+        {
+            if (DebugMode)
+                _chat.Print($"[GlamLevels] StateChangedWithType fired: changeType={changeType} guid={designGuid}");
+
+            if (changeType == StateChangeTypeDesign)
+                OnDesignApplied?.Invoke(designGuid);
         }
 
         private void OnStateChanged(nint objectPtr, int changeType)
         {
             if (DebugMode)
-                _chat.Print($"[GlamLevels] StateChangedWithType fired: changeType={changeType}");
+                _chat.Print($"[GlamLevels] StateChangedWithType fired: changeType={changeType} (no guid)");
 
             if (changeType == StateChangeTypeDesign)
-                OnDesignApplied?.Invoke();
+                OnDesignApplied?.Invoke(Guid.Empty);
+        }
+
+        // Returns the set of all design GUIDs currently registered in Glamourer.
+        // Empty set means Glamourer is unavailable — callers should not treat all snapshots as orphaned.
+        public HashSet<Guid> GetAllDesignGuids()
+        {
+            try
+            {
+                var list = _pi
+                    .GetIpcSubscriber<Dictionary<Guid, (string, string, uint, bool)>>("Glamourer.GetDesignListExtended")
+                    .InvokeFunc();
+                return list != null ? new HashSet<Guid>(list.Keys) : new HashSet<Guid>();
+            }
+            catch { return new HashSet<Guid>(); }
+        }
+
+        // Looks up the display name for a design GUID via Glamourer's design list.
+        public string LookupDesignName(Guid designGuid)
+        {
+            if (designGuid == Guid.Empty) return null;
+            try
+            {
+                var list = _pi
+                    .GetIpcSubscriber<Dictionary<Guid, (string, string, uint, bool)>>("Glamourer.GetDesignListExtended")
+                    .InvokeFunc();
+                return list?.TryGetValue(designGuid, out var info) == true ? info.Item1 : null;
+            }
+            catch { return null; }
         }
 
         public bool IsAvailable()
@@ -243,11 +295,8 @@ namespace GlamLevels.Services
 
         public void Dispose()
         {
-            try
-            {
-                _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Unsubscribe(_handler);
-            }
-            catch { }
+            try { _pi.GetIpcSubscriber<nint, int, Guid, object>(EventLabel).Unsubscribe(_handlerWithGuid); } catch { }
+            try { _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Unsubscribe(_handler); } catch { }
         }
     }
 }

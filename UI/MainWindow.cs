@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -14,6 +15,9 @@ namespace GlamLevels.UI
         private readonly SnapshotService _snapshots;
         private readonly PenumbraIpc _penumbra;
         private readonly GlamourerIpc _glamourer;
+
+        private HashSet<Guid> _validDesignGuids = new();
+        private DateTimeOffset _validGuidsRefreshedAt = DateTimeOffset.MinValue;
 
         public MainWindow(Configuration config, SnapshotService snapshots, PenumbraIpc penumbra, GlamourerIpc glamourer)
             : base("Glam Levels")
@@ -51,6 +55,15 @@ namespace GlamLevels.UI
                 ImGui.Spacing();
             }
 
+            // Refresh the live Glamourer design list at most once every 30 seconds
+            if (DateTimeOffset.UtcNow - _validGuidsRefreshedAt > TimeSpan.FromSeconds(30))
+            {
+                var fetched = _glamourer.GetAllDesignGuids();
+                if (fetched.Count > 0) // only update if Glamourer responded — empty means unavailable
+                    _validDesignGuids = fetched;
+                _validGuidsRefreshedAt = DateTimeOffset.UtcNow;
+            }
+
             var all = _snapshots.GetAll();
             if (all.Count == 0)
             {
@@ -65,7 +78,21 @@ namespace GlamLevels.UI
             {
                 var captured = DateTimeOffset.FromUnixTimeSeconds(snapshot.CapturedAt).LocalDateTime;
 
+                // Flag snapshots whose Glamourer design has been deleted
+                var isOrphan = !string.IsNullOrEmpty(snapshot.DesignGuid)
+                    && Guid.TryParse(snapshot.DesignGuid, out var snapGuid)
+                    && _validDesignGuids.Count > 0
+                    && !_validDesignGuids.Contains(snapGuid);
+
+                if (isOrphan)
+                    ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.45f, 0.45f, 1f));
                 ImGui.TextUnformatted(name);
+                if (isOrphan)
+                    ImGui.PopStyleColor();
+
+                if (isOrphan && ImGui.IsItemHovered())
+                    ImGui.SetTooltip("This design no longer exists in Glamourer. Click X to remove it.");
+
                 ImGui.SameLine(200);
                 ImGui.TextUnformatted(captured.ToString("MM/dd HH:mm"));
                 ImGui.SameLine(290);

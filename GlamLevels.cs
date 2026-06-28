@@ -29,6 +29,7 @@ namespace GlamLevels
         private readonly WindowSystem _windowSystem = new("GlamLevels");
 
         private bool _pendingSnapshot = false;
+        private Guid _pendingDesignGuid = Guid.Empty;
 
         public GlamLevelsPlugin(
             IDalamudPluginInterface pluginInterface,
@@ -84,7 +85,14 @@ namespace GlamLevels
         private void DrawUi() => _windowSystem.Draw();
         private void OpenMainUi() => _mainWindow.IsOpen = true;
 
-        private void OnDesignApplied() => _pendingSnapshot = true;
+        private void OnDesignApplied(Guid designGuid)
+        {
+            // Prefer a non-empty GUID — 3-param handler fires with GUID, 2-param fires with Empty.
+            // Both may fire per event; take the non-empty one if we get it.
+            if (designGuid != Guid.Empty)
+                _pendingDesignGuid = designGuid;
+            _pendingSnapshot = true;
+        }
 
         private void OnFrameworkUpdate(IFramework framework)
         {
@@ -93,10 +101,17 @@ namespace GlamLevels
 
             try
             {
-                var (designGuid, designName, stateHash) = _glamourer.GetCurrentDesignInfo();
+                // Consume the GUID captured from the event (may be Empty if Glamourer is older)
+                var eventGuid = _pendingDesignGuid;
+                _pendingDesignGuid = Guid.Empty;
+
+                var (diskGuid, diskName, stateHash) = _glamourer.GetCurrentDesignInfo();
                 var (collectionId, collectionName) = _penumbra.GetPlayerCollectionInfo();
 
-                // Check both GUID (disk-matched) and state hash (always available)
+                // Prefer GUID from event (direct from Glamourer), fall back to disk match
+                var designGuid = eventGuid != Guid.Empty ? eventGuid : diskGuid;
+
+                // Check existing snapshots by GUID then by state hash
                 var existingKey = (designGuid != Guid.Empty ? _snapshots.FindKeyByDesignGuid(designGuid) : null)
                                ?? _snapshots.FindKeyByStateHash(stateHash);
 
@@ -108,15 +123,14 @@ namespace GlamLevels
 
                 if (!string.IsNullOrEmpty(stateHash))
                 {
-                    // Use design name from disk match, or a timestamp-based fallback
-                    var saveName = !string.IsNullOrEmpty(designName)
-                        ? designName
-                        : $"Design {DateTime.Now:MM/dd HH:mm}";
+                    // Name priority: event GUID lookup > disk match name > timestamp fallback
+                    var saveName = (eventGuid != Guid.Empty ? _glamourer.LookupDesignName(eventGuid) : null)
+                                ?? diskName
+                                ?? $"Design {DateTime.Now:MM/dd HH:mm}";
                     _snapshots.Save(saveName, collectionId, collectionName, designGuid, stateHash, silent: false);
                 }
                 else
                 {
-                    // Glamourer state unavailable — last-resort fallback
                     _log.Debug("[GlamLevels] Could not read state, saving as [latest]");
                     _snapshots.Save(SnapshotService.LatestKey, collectionId, collectionName, silent: true);
                 }
@@ -205,7 +219,9 @@ namespace GlamLevels
                     _chat.Print($"[GlamLevels] Debug mode {(_glamourer.DebugMode ? "ON" : "OFF")}");
                     _chat.Print($"  Glamourer: {_glamourer.IsAvailable()}, Penumbra: {_penumbra.IsAvailable()}");
                     var (dbgGuid, dbgName, dbgHash) = _glamourer.GetCurrentDesignInfo();
-                    _chat.Print($"  Current design: \"{dbgName}\" ({dbgGuid})");
+                    var dbgEventName = dbgGuid != Guid.Empty ? _glamourer.LookupDesignName(dbgGuid) : null;
+                    _chat.Print($"  Disk match: \"{dbgName}\" ({dbgGuid})");
+                    _chat.Print($"  Event GUID lookup: \"{dbgEventName ?? "n/a"}\"");
                     _chat.Print($"  State hash: {dbgHash ?? "null"}");
                     _chat.Print($"  Match diagnostics: {_glamourer.GetMatchDiagnostics()}");
                     var (dbgCid, dbgCname) = _penumbra.GetPlayerCollectionInfo();
