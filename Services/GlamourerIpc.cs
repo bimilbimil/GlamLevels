@@ -161,6 +161,56 @@ namespace GlamLevels.Services
             return default;
         }
 
+        public string GetMatchDiagnostics()
+        {
+            var designsDir = Path.Combine(_pi.ConfigDirectory.Parent.FullName, "Glamourer", "designs");
+            if (!Directory.Exists(designsDir))
+                return $"Designs dir NOT found: {designsDir}";
+            var files = Directory.GetFiles(designsDir, "*.json");
+            if (files.Length == 0)
+                return $"Designs dir found but EMPTY: {designsDir}";
+
+            try
+            {
+                var (ec, state) = _pi
+                    .GetIpcSubscriber<int, uint, (int, JObject)>("Glamourer.GetState")
+                    .InvokeFunc(0, 0u);
+                var stateEquipment = state?["Equipment"] as JObject;
+                if (stateEquipment == null)
+                    return $"{files.Length} design files found, but GetState returned no Equipment (ec={ec})";
+
+                int bestScore = 0;
+                int checkedCount = 0;
+                int applySlots = 0;
+                foreach (var file in files)
+                {
+                    if (!Guid.TryParse(Path.GetFileNameWithoutExtension(file), out _)) continue;
+                    checkedCount++;
+                    var design = JObject.Parse(File.ReadAllText(file));
+                    var designEquip = design["Equipment"] as JObject;
+                    if (designEquip == null) continue;
+                    int score = 0; bool mismatch = false;
+                    foreach (var prop in designEquip.Properties())
+                    {
+                        var dSlot = prop.Value as JObject;
+                        if (dSlot?["Apply"]?.Value<bool>() != true) continue;
+                        if (dSlot["ItemId"] == null) continue;
+                        applySlots++;
+                        var sSlot = stateEquipment[prop.Name] as JObject;
+                        if (sSlot == null || dSlot["ItemId"].Value<long>() != sSlot["ItemId"]?.Value<long>())
+                        { mismatch = true; break; }
+                        score++;
+                    }
+                    if (!mismatch && score > bestScore) bestScore = score;
+                }
+                return $"{files.Length} design files, {checkedCount} valid GUIDs, {applySlots} apply-slots checked, best score={bestScore}";
+            }
+            catch (Exception ex)
+            {
+                return $"{files.Length} design files found, match threw: {ex.Message}";
+            }
+        }
+
         public void DumpState(string filePath)
         {
             try

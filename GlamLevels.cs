@@ -207,6 +207,7 @@ namespace GlamLevels
                     _chat.Print($"  Glamourer: {_glamourer.IsAvailable()}, Penumbra: {_penumbra.IsAvailable()}");
                     var (dbgGuid, dbgName) = _glamourer.GetCurrentDesignInfo();
                     _chat.Print($"  Current design: \"{dbgName}\" ({dbgGuid})");
+                    _chat.Print($"  Match diagnostics: {_glamourer.GetMatchDiagnostics()}");
                     var (dbgCid, dbgCname) = _penumbra.GetPlayerCollectionInfo();
                     _chat.Print($"  Player collection: [{dbgCname}] ({dbgCid})");
                     break;
