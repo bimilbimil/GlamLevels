@@ -48,7 +48,7 @@ namespace GlamLevels.Services
         private void OnStateChanged(nint objectPtr, int changeType)
         {
             if (DebugMode)
-                _chat.Print($"[GlamLevels] StateChangedWithType fired: changeType={changeType}");
+                _chat.Print($"[GlamLevels] StateChanged: type={changeType} ptr={objectPtr} (Design={StateChangeTypeDesign})");
 
             if (changeType == StateChangeTypeDesign)
                 OnDesignApplied?.Invoke();
@@ -390,6 +390,58 @@ namespace GlamLevels.Services
             catch (Exception ex)
             {
                 _chat.Print($"[GlamLevels] Diagnostics threw: {ex.Message}");
+            }
+        }
+
+        // Prints a slot-by-slot comparison of the newest design file vs current GetState.
+        // Use this to diagnose ItemId format differences between design files and live state.
+        public void PrintNewDesignComparison()
+        {
+            var designsDir = Path.Combine(_pi.ConfigDirectory.Parent.FullName, "Glamourer", "designs");
+            if (!Directory.Exists(designsDir)) { _chat.Print($"[GlamLevels] Designs dir not found: {designsDir}"); return; }
+
+            var files = new System.IO.DirectoryInfo(designsDir).GetFiles("*.json");
+            if (files.Length == 0) { _chat.Print("[GlamLevels] No design files found."); return; }
+
+            // Sort by last write time descending — newest design file first
+            System.Array.Sort(files, (a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
+            var newest = files[0];
+            _chat.Print($"[GlamLevels] Newest design file: {newest.Name} (modified {newest.LastWriteTimeUtc:HH:mm:ss} UTC)");
+
+            JObject design;
+            try { design = JObject.Parse(System.IO.File.ReadAllText(newest.FullName)); }
+            catch (Exception ex) { _chat.Print($"[GlamLevels] Could not parse design file: {ex.Message}"); return; }
+
+            _chat.Print($"[GlamLevels] Design name from file: \"{design["Name"]?.Value<string>() ?? "(no name)"}\"");
+
+            var designEquip = design["Equipment"] as JObject;
+            if (designEquip == null) { _chat.Print("[GlamLevels] Design has no Equipment block."); return; }
+
+            JObject stateEquipment;
+            try
+            {
+                var (ec, state) = _pi.GetIpcSubscriber<int, uint, (int, JObject)>("Glamourer.GetState").InvokeFunc(0, 0u);
+                stateEquipment = state?["Equipment"] as JObject;
+                if (stateEquipment == null) { _chat.Print($"[GlamLevels] GetState ec={ec}, no Equipment."); return; }
+            }
+            catch (Exception ex) { _chat.Print($"[GlamLevels] GetState failed: {ex.Message}"); return; }
+
+            var stateSlots = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+            foreach (var sp in stateEquipment.Properties())
+                stateSlots[sp.Name.Replace(" ", "")] = sp.Value as JObject;
+
+            int printed = 0;
+            foreach (var prop in designEquip.Properties())
+            {
+                var dSlot = prop.Value as JObject;
+                var apply = dSlot?["Apply"]?.Value<bool>();
+                var dItemId = dSlot?["ItemId"]?.Value<long>() ?? 0;
+                stateSlots.TryGetValue(prop.Name.Replace(" ", ""), out var sSlot);
+                var sItemId = sSlot?["ItemId"]?.Value<long>();
+
+                var match = sItemId.HasValue && dItemId == sItemId.Value ? "MATCH" : "DIFF";
+                _chat.Print($"[GlamLevels]  {prop.Name,-12} apply={apply?.ToString() ?? "?"} design={dItemId,6}  state={sItemId?.ToString() ?? "?",6}  {match}");
+                if (++printed >= 12) { _chat.Print("[GlamLevels] (truncated — first 12 slots shown)"); break; }
             }
         }
 

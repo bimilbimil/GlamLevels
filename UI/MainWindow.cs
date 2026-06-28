@@ -16,8 +16,12 @@ namespace GlamLevels.UI
         private readonly PenumbraIpc _penumbra;
         private readonly GlamourerIpc _glamourer;
 
-        private HashSet<Guid> _validDesignGuids = new();
-        private DateTimeOffset _validGuidsRefreshedAt = DateTimeOffset.MinValue;
+        // Cached design list: GUID → name, refreshed every 30 seconds
+        private Dictionary<Guid, string> _validDesigns = new();
+        private DateTimeOffset _validDesignsRefreshedAt = DateTimeOffset.MinValue;
+
+        // Pending rename from the identify dropdown (deferred so we don't modify collection mid-loop)
+        private (string OldName, string NewName)? _pendingRename;
 
         public MainWindow(Configuration config, SnapshotService snapshots, PenumbraIpc penumbra, GlamourerIpc glamourer)
             : base("Glam Levels")
@@ -28,8 +32,8 @@ namespace GlamLevels.UI
             _glamourer = glamourer;
             SizeConstraints = new WindowSizeConstraints
             {
-                MinimumSize = new Vector2(460, 260),
-                MaximumSize = new Vector2(800, 600),
+                MinimumSize = new Vector2(520, 260),
+                MaximumSize = new Vector2(900, 600),
             };
         }
 
@@ -56,12 +60,12 @@ namespace GlamLevels.UI
             }
 
             // Refresh the live Glamourer design list at most once every 30 seconds
-            if (DateTimeOffset.UtcNow - _validGuidsRefreshedAt > TimeSpan.FromSeconds(30))
+            if (DateTimeOffset.UtcNow - _validDesignsRefreshedAt > TimeSpan.FromSeconds(30))
             {
-                var fetched = _glamourer.GetAllDesignGuids();
-                if (fetched.Count > 0) // only update if Glamourer responded — empty means unavailable
-                    _validDesignGuids = fetched;
-                _validGuidsRefreshedAt = DateTimeOffset.UtcNow;
+                var fetched = _glamourer.GetAllDesignNames();
+                if (fetched.Count > 0)
+                    _validDesigns = fetched;
+                _validDesignsRefreshedAt = DateTimeOffset.UtcNow;
             }
 
             var all = _snapshots.GetAll();
@@ -79,10 +83,11 @@ namespace GlamLevels.UI
                 var captured = DateTimeOffset.FromUnixTimeSeconds(snapshot.CapturedAt).LocalDateTime;
 
                 // Flag snapshots whose Glamourer design has been deleted
-                var isOrphan = !string.IsNullOrEmpty(snapshot.DesignGuid)
-                    && Guid.TryParse(snapshot.DesignGuid, out var snapGuid)
-                    && _validDesignGuids.Count > 0
-                    && !_validDesignGuids.Contains(snapGuid);
+                Guid snapGuid = Guid.Empty;
+                var hasGuid = !string.IsNullOrEmpty(snapshot.DesignGuid) && Guid.TryParse(snapshot.DesignGuid, out snapGuid);
+                var isOrphan = hasGuid && _validDesigns.Count > 0 && !_validDesigns.ContainsKey(snapGuid);
+                // Show identify dropdown when the design couldn't be auto-named (no GUID matched)
+                var needsIdentify = !hasGuid && !string.IsNullOrEmpty(snapshot.StateHash);
 
                 if (isOrphan)
                     ImGui.PushStyleColor(ImGuiCol.Text, new Vector4(1f, 0.45f, 0.45f, 1f));
@@ -114,12 +119,35 @@ namespace GlamLevels.UI
                 }
                 ImGui.SameLine();
 
+                if (needsIdentify && _validDesigns.Count > 0)
+                {
+                    ImGui.SetNextItemWidth(140);
+                    if (ImGui.BeginCombo($"##{name}_identify", "Identify..."))
+                    {
+                        foreach (var (_, designName) in _validDesigns)
+                        {
+                            if (ImGui.Selectable(designName))
+                                _pendingRename = (name, designName);
+                        }
+                        ImGui.EndCombo();
+                    }
+                    if (ImGui.IsItemHovered())
+                        ImGui.SetTooltip("Pick the Glamourer design this snapshot belongs to.");
+                    ImGui.SameLine();
+                }
+
                 if (ImGui.Button($"X##{name}"))
                     toDelete = name;
             }
 
             if (toDelete != null)
                 _snapshots.Delete(toDelete);
+
+            if (_pendingRename.HasValue)
+            {
+                _snapshots.Rename(_pendingRename.Value.OldName, _pendingRename.Value.NewName);
+                _pendingRename = null;
+            }
         }
 
         public void Dispose() { }

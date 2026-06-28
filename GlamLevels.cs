@@ -93,14 +93,22 @@ namespace GlamLevels
 
             try
             {
+                if (_glamourer.DebugMode)
+                    _chat.Print("[GlamLevels] OnFrameworkUpdate: processing pending snapshot...");
+
                 var (designGuid, designName, stateHash) = _glamourer.GetCurrentDesignInfo();
                 var (collectionId, collectionName) = _penumbra.GetPlayerCollectionInfo();
+
+                if (_glamourer.DebugMode)
+                    _chat.Print($"[GlamLevels]   designGuid={designGuid}  name=\"{designName ?? "(null)"}\"  hash={stateHash ?? "null"}  collection={collectionName}");
 
                 var existingKey = (designGuid != Guid.Empty ? _snapshots.FindKeyByDesignGuid(designGuid) : null)
                                ?? _snapshots.FindKeyByStateHash(stateHash);
 
                 if (existingKey != null)
                 {
+                    if (_glamourer.DebugMode)
+                        _chat.Print($"[GlamLevels]   Already tracked as \"{existingKey}\", skipping auto-save.");
                     _log.Debug("[GlamLevels] Design already tracked as '{Key}', skipping auto-save", existingKey);
                     return;
                 }
@@ -242,6 +250,10 @@ namespace GlamLevels
                     _glamourer.PrintMatchDiagnostics();
                     var (dbgCid, dbgCname) = _penumbra.GetPlayerCollectionInfo();
                     _chat.Print($"  Player collection: [{dbgCname}] ({dbgCid})");
+                    break;
+
+                case "testdesign":
+                    _glamourer.PrintNewDesignComparison();
                     break;
 
                 case "statedump":
