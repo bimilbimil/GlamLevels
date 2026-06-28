@@ -17,9 +17,7 @@ namespace GlamLevels.Services
         private readonly IDalamudPluginInterface _pi;
         private readonly IPluginLog _log;
         private readonly IChatGui _chat;
-        private readonly Action<nint, int> _handler2;
-        private readonly Action<nint, int, object> _handler3;
-        private bool _using3Params = false;
+        private readonly Action<nint, int> _handler;
 
         public bool DebugMode { get; set; } = false;
 
@@ -30,50 +28,27 @@ namespace GlamLevels.Services
             _pi = pi;
             _log = log;
             _chat = chat;
-            _handler2 = OnStateChanged2;
-            _handler3 = OnStateChanged3;
+            _handler = OnStateChanged;
             Subscribe();
         }
 
         private void Subscribe()
         {
-            // First try 3-param subscription — if Glamourer fires (nint, int, object) we get the extra data.
-            // Fall back to 2-param if that doesn't register.
             try
             {
-                _pi.GetIpcSubscriber<nint, int, object, object>(EventLabel).Subscribe(_handler3);
-                _using3Params = true;
-                _log.Info("[GlamLevels] Subscribed to {Label} (3-param)", EventLabel);
+                _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Subscribe(_handler);
+                _log.Info("[GlamLevels] Subscribed to {Label}", EventLabel);
             }
-            catch
+            catch (Exception ex)
             {
-                try
-                {
-                    _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Subscribe(_handler2);
-                    _log.Info("[GlamLevels] Subscribed to {Label} (2-param fallback)", EventLabel);
-                }
-                catch (Exception ex)
-                {
-                    _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label}", EventLabel);
-                }
+                _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label}", EventLabel);
             }
         }
 
-        private void OnStateChanged3(nint objectPtr, int changeType, object extra)
+        private void OnStateChanged(nint objectPtr, int changeType)
         {
             if (DebugMode)
-            {
-                var extraDesc = extra == null ? "null" : $"{extra.GetType().Name}={extra}";
-                _chat.Print($"[GlamLevels] StateChanged(3): type={changeType} ptr={objectPtr} extra={extraDesc}");
-            }
-            if (changeType == StateChangeTypeDesign)
-                OnDesignApplied?.Invoke();
-        }
-
-        private void OnStateChanged2(nint objectPtr, int changeType)
-        {
-            if (DebugMode)
-                _chat.Print($"[GlamLevels] StateChanged(2): type={changeType} ptr={objectPtr} (Design={StateChangeTypeDesign})");
+                _chat.Print($"[GlamLevels] StateChanged: type={changeType} ptr={objectPtr} (Design={StateChangeTypeDesign})");
 
             if (changeType == StateChangeTypeDesign)
                 OnDesignApplied?.Invoke();
@@ -495,10 +470,7 @@ namespace GlamLevels.Services
 
         public void Dispose()
         {
-            if (_using3Params)
-                try { _pi.GetIpcSubscriber<nint, int, object, object>(EventLabel).Unsubscribe(_handler3); } catch { }
-            else
-                try { _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Unsubscribe(_handler2); } catch { }
+            try { _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Unsubscribe(_handler); } catch { }
         }
     }
 }
