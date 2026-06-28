@@ -191,10 +191,14 @@ namespace GlamLevels.Services
                         var dSlot = prop.Value as JObject;
                         if (dSlot?["Apply"]?.Value<bool>() != true) continue;
                         if (dSlot["ItemId"] == null) continue;
-                        if (dSlot["ItemId"].Value<long>() == 0) continue; // 0 = slot not set in design, skip
+                        var dItemId = dSlot["ItemId"].Value<long>();
+                        if (dItemId == 0) continue; // 0 = slot not set in design, skip
 
                         stateSlots.TryGetValue(prop.Name.Replace(" ", ""), out var sSlot);
-                        if (sSlot == null || dSlot["ItemId"].Value<long>() != sSlot["ItemId"]?.Value<long>())
+                        var sItemId = sSlot?["ItemId"]?.Value<long>() ?? -1;
+                        // Allow ±1 tolerance: design files and GetState use different item ID
+                        // representations across Glamourer versions (e.g. 40022 vs 40021)
+                        if (Math.Abs(dItemId - sItemId) > 1)
                         {
                             mismatch = true;
                             break;
