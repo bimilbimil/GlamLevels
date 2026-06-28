@@ -162,6 +162,12 @@ namespace GlamLevels.Services
                 return default;
             }
 
+            // Normalize slot names by removing spaces — different Glamourer versions serialize
+            // slot names differently ("Main Hand" vs "MainHand"). Strip spaces on both sides.
+            var stateSlots = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+            foreach (var prop in stateEquipment.Properties())
+                stateSlots[prop.Name.Replace(" ", "")] = prop.Value as JObject;
+
             Guid bestGuid = Guid.Empty;
             string bestName = null;
             int bestScore = 0;
@@ -183,11 +189,11 @@ namespace GlamLevels.Services
                     foreach (var prop in designEquip.Properties())
                     {
                         var dSlot = prop.Value as JObject;
-                        // Only check slots the design explicitly applies and that have an ItemId
                         if (dSlot?["Apply"]?.Value<bool>() != true) continue;
                         if (dSlot["ItemId"] == null) continue;
+                        if (dSlot["ItemId"].Value<long>() == 0) continue; // 0 = slot not set in design, skip
 
-                        var sSlot = stateEquipment[prop.Name] as JObject;
+                        stateSlots.TryGetValue(prop.Name.Replace(" ", ""), out var sSlot);
                         if (sSlot == null || dSlot["ItemId"].Value<long>() != sSlot["ItemId"]?.Value<long>())
                         {
                             mismatch = true;
@@ -237,6 +243,10 @@ namespace GlamLevels.Services
                     System.Linq.Enumerable.Select(stateEquipment.Properties(), p => p.Name), 4));
                 _chat.Print($"[GlamLevels] State equipment keys (first 4): {stateKeys}");
 
+                var stateSlots = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+                foreach (var sp in stateEquipment.Properties())
+                    stateSlots[sp.Name.Replace(" ", "")] = sp.Value as JObject;
+
                 // Find first design with an Apply=true slot and print the comparison
                 foreach (var file in files)
                 {
@@ -249,10 +259,10 @@ namespace GlamLevels.Services
                         var dSlot = prop.Value as JObject;
                         if (dSlot?["Apply"]?.Value<bool>() != true) continue;
                         if (dSlot["ItemId"] == null) continue;
-                        var designItemId = dSlot["ItemId"];
-                        var sSlot = stateEquipment[prop.Name] as JObject;
-                        var stateItemId = sSlot?["ItemId"];
-                        _chat.Print($"[GlamLevels] Example slot [{prop.Name}]: design ItemId={designItemId} | state ItemId={stateItemId ?? (object)"(slot not found)"}");
+                        var designItemId = dSlot["ItemId"].Value<long>();
+                        stateSlots.TryGetValue(prop.Name.Replace(" ", ""), out var sSlot);
+                        var stateItemId = sSlot?["ItemId"]?.Value<long>();
+                        _chat.Print($"[GlamLevels] Slot [{prop.Name}]: design ItemId={designItemId} (zero={designItemId == 0}) | state ItemId={stateItemId?.ToString() ?? "(not found)"}");
                         _chat.Print($"[GlamLevels] Design slot keys: {string.Join(", ", System.Linq.Enumerable.Select(dSlot.Properties(), p => p.Name))}");
                         return;
                     }
