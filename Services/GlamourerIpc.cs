@@ -139,7 +139,13 @@ namespace GlamLevels.Services
                         return (ipcGuid, ipcName, hash);
                 }
 
-                // 2. Fall back to disk-based equipment matching
+                // 2. Match via GetDesignJObject IPC — uses same serialization as GetState,
+                //    so ItemIds are consistent. More reliable than reading disk files.
+                var (ipcMatchGuid, ipcMatchName) = MatchDesignViaIpc(stateEquipment);
+                if (ipcMatchGuid != Guid.Empty)
+                    return (ipcMatchGuid, ipcMatchName, hash);
+
+                // 3. Last resort: disk-based matching (older Glamourer, no GetDesignJObject)
                 var (diskGuid, diskName) = MatchDesignFromDisk(stateEquipment);
                 return (diskGuid, diskName, hash);
             }
@@ -188,6 +194,74 @@ namespace GlamLevels.Services
             var raw = string.Join(";", System.Linq.Enumerable.Select(sorted, kv => $"{kv.Key}:{kv.Value}"));
             var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(raw));
             return Convert.ToHexString(bytes);
+        }
+
+        // Matches via GetDesignJObject IPC — both sides use Glamourer's current serialization,
+        // so ItemIds are in the same format (unlike disk files which may lag behind).
+        private (Guid, string) MatchDesignViaIpc(JObject stateEquipment)
+        {
+            try
+            {
+                var designs = _pi
+                    .GetIpcSubscriber<Dictionary<Guid, (string, string, uint, bool)>>("Glamourer.GetDesignListExtended")
+                    .InvokeFunc();
+                if (designs == null || designs.Count == 0) return default;
+
+                var stateSlots = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
+                foreach (var p in stateEquipment.Properties())
+                    stateSlots[p.Name.Replace(" ", "")] = p.Value as JObject;
+
+                Guid bestGuid = Guid.Empty;
+                string bestName = null;
+                int bestScore = 0;
+
+                foreach (var (guid, info) in designs)
+                {
+                    JObject designJObj;
+                    try
+                    {
+                        designJObj = _pi.GetIpcSubscriber<Guid, JObject>("Glamourer.GetDesignJObject").InvokeFunc(guid);
+                    }
+                    catch { continue; }
+
+                    var designEquip = designJObj?["Equipment"] as JObject;
+                    if (designEquip == null) continue;
+
+                    int score = 0;
+                    bool mismatch = false;
+
+                    foreach (var prop in designEquip.Properties())
+                    {
+                        var dSlot = prop.Value as JObject;
+                        if (dSlot?["Apply"]?.Value<bool>() != true) continue;
+                        var dItemId = dSlot["ItemId"]?.Value<long>() ?? 0;
+                        if (dItemId == 0) continue;
+
+                        stateSlots.TryGetValue(prop.Name.Replace(" ", ""), out var sSlot);
+                        var sItemId = sSlot?["ItemId"]?.Value<long>() ?? -1;
+                        if (dItemId != sItemId) { mismatch = true; break; }
+                        score++;
+                    }
+
+                    if (!mismatch && score > bestScore)
+                    {
+                        bestScore = score;
+                        bestGuid = guid;
+                        bestName = info.Item1;
+                    }
+                }
+
+                if (bestScore > 0)
+                {
+                    _log.Debug("[GlamLevels] IPC-matched design '{Name}' ({Guid}) score={Score}", bestName, bestGuid, bestScore);
+                    return (bestGuid, bestName);
+                }
+            }
+            catch (Exception ex)
+            {
+                _log.Debug(ex, "[GlamLevels] MatchDesignViaIpc failed");
+            }
+            return default;
         }
 
         // Scans Glamourer design files on disk and finds the one whose applied equipment
