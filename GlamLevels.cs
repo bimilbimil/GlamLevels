@@ -121,16 +121,10 @@ namespace GlamLevels
                     }
                     else
                     {
-                        // Disk matching failed — save with a date name and hint the user to rename
                         var saveName = $"Design {DateTime.Now:MM/dd HH:mm}";
                         _snapshots.Save(saveName, collectionId, collectionName, designGuid, stateHash, silent: false);
-                        var designList = _glamourer.GetAllDesignNames();
-                        if (designList.Count > 0)
-                        {
-                            var names = string.Join(", ", designList.Values);
-                            _chat.Print($"[GlamLevels] Could not detect design name. Your designs: {names}");
-                            _chat.Print($"[GlamLevels] While still on this design, run: /glamlevel identify \"<correct name>\"");
-                        }
+                        _chat.Print($"[GlamLevels] Could not auto-detect design name — saved as \"{saveName}\".");
+                        _chat.Print($"[GlamLevels] While this design is still applied: open /glamlevel and use Identify..., or run /glamlevel identify <name>.");
                     }
                 }
                 else
@@ -219,25 +213,26 @@ namespace GlamLevels
                     break;
 
                 case "identify":
-                    // Lets the user name the design they currently have applied without needing
-                    // to remember the auto-generated date string from the auto-save message.
-                    if (parts.Length < 2) { _chat.Print("[GlamLevels] Usage: /glamlevel identify \"<design name>\""); return; }
+                    var idName = AfterSubcommand(args, "identify");
+                    if (string.IsNullOrEmpty(idName)) { _chat.Print("[GlamLevels] Usage: /glamlevel identify <design name>"); return; }
                     var (_, _, idHash) = _glamourer.GetCurrentDesignInfo();
                     if (string.IsNullOrEmpty(idHash)) { _chat.Print("[GlamLevels] Cannot read current state — is Glamourer available?"); return; }
                     var idKey = _snapshots.FindKeyByStateHash(idHash);
                     if (idKey == null) { _chat.Print("[GlamLevels] No saved snapshot for the current design. Apply it first."); return; }
-                    if (_snapshots.Rename(idKey, parts[1]))
-                        _chat.Print($"[GlamLevels] Identified \"{idKey}\" → \"{parts[1]}\".");
+                    if (_snapshots.Rename(idKey, idName))
+                        _chat.Print($"[GlamLevels] Identified \"{idKey}\" → \"{idName}\".");
                     else
-                        _chat.Print($"[GlamLevels] A snapshot named \"{parts[1]}\" already exists.");
+                        _chat.Print($"[GlamLevels] A snapshot named \"{idName}\" already exists.");
                     break;
 
                 case "rename":
-                    if (parts.Length < 3) { _chat.Print("[GlamLevels] Usage: /glamlevel rename \"<old name>\" \"<new name>\""); return; }
-                    if (_snapshots.Rename(parts[1], parts[2]))
-                        _chat.Print($"[GlamLevels] Renamed \"{parts[1]}\" → \"{parts[2]}\".");
+                    // Expects: rename "old name" "new name" — quotes required when names contain spaces
+                    var renameParts = ParseQuotedPair(AfterSubcommand(args, "rename"));
+                    if (renameParts == null) { _chat.Print("[GlamLevels] Usage: /glamlevel rename \"<old name>\" \"<new name>\""); return; }
+                    if (_snapshots.Rename(renameParts.Value.Item1, renameParts.Value.Item2))
+                        _chat.Print($"[GlamLevels] Renamed \"{renameParts.Value.Item1}\" → \"{renameParts.Value.Item2}\".");
                     else
-                        _chat.Print($"[GlamLevels] No snapshot named \"{parts[1]}\".");
+                        _chat.Print($"[GlamLevels] No snapshot named \"{renameParts.Value.Item1}\".");
                     break;
 
                 case "debug":
@@ -267,9 +262,36 @@ namespace GlamLevels
                     break;
 
                 default:
-                    _chat.Print("[GlamLevels] Commands: fix [name] | update | identify <name> | list | rename <old> <new> | delete <name> | save <name> [collection] | debug");
+                    _chat.Print("[GlamLevels] Commands: fix [name] | update | identify <name> | list | rename \"<old>\" \"<new>\" | delete <name> | save <name> [collection]");
                     break;
             }
+        }
+
+        // Returns everything after the subcommand word, with optional surrounding quotes stripped.
+        private static string AfterSubcommand(string args, string sub)
+        {
+            var trimmed = args.Trim();
+            if (trimmed.Length <= sub.Length) return "";
+            return trimmed.Substring(sub.Length).Trim().Trim('"').Trim();
+        }
+
+        // Parses "\"old name\" \"new name\"" or "old new" into two tokens.
+        private static (string, string)? ParseQuotedPair(string s)
+        {
+            if (string.IsNullOrWhiteSpace(s)) return null;
+            s = s.Trim();
+            if (s.StartsWith('"'))
+            {
+                var close = s.IndexOf('"', 1);
+                if (close < 0) return null;
+                var first = s.Substring(1, close - 1);
+                var rest = s.Substring(close + 1).Trim().Trim('"').Trim();
+                return string.IsNullOrEmpty(rest) ? null : (first, rest);
+            }
+            // No quotes — split on first space
+            var sp = s.IndexOf(' ');
+            if (sp < 0) return null;
+            return (s.Substring(0, sp), s.Substring(sp + 1).Trim());
         }
     }
 }
