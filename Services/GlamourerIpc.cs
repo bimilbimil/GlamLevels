@@ -17,7 +17,9 @@ namespace GlamLevels.Services
         private readonly IDalamudPluginInterface _pi;
         private readonly IPluginLog _log;
         private readonly IChatGui _chat;
-        private readonly Action<nint, int> _handler;
+        private readonly Action<nint, int> _handler2;
+        private readonly Action<nint, int, object> _handler3;
+        private bool _using3Params = false;
 
         public bool DebugMode { get; set; } = false;
 
@@ -28,27 +30,50 @@ namespace GlamLevels.Services
             _pi = pi;
             _log = log;
             _chat = chat;
-            _handler = OnStateChanged;
+            _handler2 = OnStateChanged2;
+            _handler3 = OnStateChanged3;
             Subscribe();
         }
 
         private void Subscribe()
         {
+            // First try 3-param subscription — if Glamourer fires (nint, int, object) we get the extra data.
+            // Fall back to 2-param if that doesn't register.
             try
             {
-                _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Subscribe(_handler);
-                _log.Info("[GlamLevels] Subscribed to {Label}", EventLabel);
+                _pi.GetIpcSubscriber<nint, int, object, object>(EventLabel).Subscribe(_handler3);
+                _using3Params = true;
+                _log.Info("[GlamLevels] Subscribed to {Label} (3-param)", EventLabel);
             }
-            catch (Exception ex)
+            catch
             {
-                _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label}", EventLabel);
+                try
+                {
+                    _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Subscribe(_handler2);
+                    _log.Info("[GlamLevels] Subscribed to {Label} (2-param fallback)", EventLabel);
+                }
+                catch (Exception ex)
+                {
+                    _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label}", EventLabel);
+                }
             }
         }
 
-        private void OnStateChanged(nint objectPtr, int changeType)
+        private void OnStateChanged3(nint objectPtr, int changeType, object extra)
         {
             if (DebugMode)
-                _chat.Print($"[GlamLevels] StateChanged: type={changeType} ptr={objectPtr} (Design={StateChangeTypeDesign})");
+            {
+                var extraDesc = extra == null ? "null" : $"{extra.GetType().Name}={extra}";
+                _chat.Print($"[GlamLevels] StateChanged(3): type={changeType} ptr={objectPtr} extra={extraDesc}");
+            }
+            if (changeType == StateChangeTypeDesign)
+                OnDesignApplied?.Invoke();
+        }
+
+        private void OnStateChanged2(nint objectPtr, int changeType)
+        {
+            if (DebugMode)
+                _chat.Print($"[GlamLevels] StateChanged(2): type={changeType} ptr={objectPtr} (Design={StateChangeTypeDesign})");
 
             if (changeType == StateChangeTypeDesign)
                 OnDesignApplied?.Invoke();
@@ -393,9 +418,13 @@ namespace GlamLevels.Services
             }
         }
 
+        // Prints a slot-by-slot comparison of the oldest design file vs current GetState.
+        public void PrintOldestDesignComparison() => PrintDesignComparison(oldest: true);
+
         // Prints a slot-by-slot comparison of the newest design file vs current GetState.
-        // Use this to diagnose ItemId format differences between design files and live state.
-        public void PrintNewDesignComparison()
+        public void PrintNewDesignComparison() => PrintDesignComparison(oldest: false);
+
+        private void PrintDesignComparison(bool oldest)
         {
             var designsDir = Path.Combine(_pi.ConfigDirectory.Parent.FullName, "Glamourer", "designs");
             if (!Directory.Exists(designsDir)) { _chat.Print($"[GlamLevels] Designs dir not found: {designsDir}"); return; }
@@ -403,19 +432,22 @@ namespace GlamLevels.Services
             var files = new System.IO.DirectoryInfo(designsDir).GetFiles("*.json");
             if (files.Length == 0) { _chat.Print("[GlamLevels] No design files found."); return; }
 
-            // Sort by last write time descending — newest design file first
-            System.Array.Sort(files, (a, b) => b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
-            var newest = files[0];
-            _chat.Print($"[GlamLevels] Newest design file: {newest.Name} (modified {newest.LastWriteTimeUtc:HH:mm:ss} UTC)");
+            System.Array.Sort(files, (a, b) =>
+                oldest ? a.LastWriteTimeUtc.CompareTo(b.LastWriteTimeUtc)
+                       : b.LastWriteTimeUtc.CompareTo(a.LastWriteTimeUtc));
+
+            var target = files[0];
+            var label = oldest ? "Oldest" : "Newest";
+            _chat.Print($"[GlamLevels] {label} design file: {target.Name} (modified {target.LastWriteTimeUtc:MM/dd HH:mm:ss} UTC)");
 
             JObject design;
-            try { design = JObject.Parse(System.IO.File.ReadAllText(newest.FullName)); }
-            catch (Exception ex) { _chat.Print($"[GlamLevels] Could not parse design file: {ex.Message}"); return; }
+            try { design = JObject.Parse(System.IO.File.ReadAllText(target.FullName)); }
+            catch (Exception ex) { _chat.Print($"[GlamLevels] Could not parse: {ex.Message}"); return; }
 
-            _chat.Print($"[GlamLevels] Design name from file: \"{design["Name"]?.Value<string>() ?? "(no name)"}\"");
+            _chat.Print($"[GlamLevels] Design name: \"{design["Name"]?.Value<string>() ?? "(no name)"}\"");
 
             var designEquip = design["Equipment"] as JObject;
-            if (designEquip == null) { _chat.Print("[GlamLevels] Design has no Equipment block."); return; }
+            if (designEquip == null) { _chat.Print("[GlamLevels] No Equipment block in design file."); return; }
 
             JObject stateEquipment;
             try
@@ -441,7 +473,7 @@ namespace GlamLevels.Services
 
                 var match = sItemId.HasValue && dItemId == sItemId.Value ? "MATCH" : "DIFF";
                 _chat.Print($"[GlamLevels]  {prop.Name,-12} apply={apply?.ToString() ?? "?"} design={dItemId,6}  state={sItemId?.ToString() ?? "?",6}  {match}");
-                if (++printed >= 12) { _chat.Print("[GlamLevels] (truncated — first 12 slots shown)"); break; }
+                if (++printed >= 12) { _chat.Print("[GlamLevels] (first 12 slots shown)"); break; }
             }
         }
 
@@ -463,7 +495,10 @@ namespace GlamLevels.Services
 
         public void Dispose()
         {
-            try { _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Unsubscribe(_handler); } catch { }
+            if (_using3Params)
+                try { _pi.GetIpcSubscriber<nint, int, object, object>(EventLabel).Unsubscribe(_handler3); } catch { }
+            else
+                try { _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Unsubscribe(_handler2); } catch { }
         }
     }
 }

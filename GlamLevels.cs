@@ -256,6 +256,10 @@ namespace GlamLevels
                     _glamourer.PrintNewDesignComparison();
                     break;
 
+                case "testolddesign":
+                    _glamourer.PrintOldestDesignComparison();
+                    break;
+
                 case "statedump":
                     var dumpPath = System.IO.Path.Combine(_pi.ConfigDirectory.FullName, "state_debug.json");
                     _glamourer.DumpState(dumpPath);
