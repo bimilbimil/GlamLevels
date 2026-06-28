@@ -129,14 +129,54 @@ namespace GlamLevels.Services
                 if (stateEquipment == null) return default;
 
                 var hash = ComputeStateHash(stateEquipment);
-                var (guid, name) = MatchDesignFromDisk(stateEquipment);
-                return (guid, name, hash);
+
+                // 1. Ask Glamourer directly which design is applied (works on newer versions)
+                var ipcGuid = TryGetAppliedDesignGuid();
+                if (ipcGuid != Guid.Empty)
+                {
+                    var ipcName = LookupDesignName(ipcGuid);
+                    if (!string.IsNullOrEmpty(ipcName))
+                        return (ipcGuid, ipcName, hash);
+                }
+
+                // 2. Fall back to disk-based equipment matching
+                var (diskGuid, diskName) = MatchDesignFromDisk(stateEquipment);
+                return (diskGuid, diskName, hash);
             }
             catch (Exception ex)
             {
                 _log.Warning(ex, "[GlamLevels] GetCurrentDesignInfo failed");
                 return default;
             }
+        }
+
+        // Tries several known Glamourer IPC endpoints to get the GUID of the design
+        // currently applied to the local player. Returns Guid.Empty if none work.
+        private Guid TryGetAppliedDesignGuid()
+        {
+            // int-based object index (0 = local player)
+            var intEndpoints = new[] { "Glamourer.GetStateDesign", "Glamourer.GetCurrentDesign", "Glamourer.GetAppliedDesign" };
+            foreach (var ep in intEndpoints)
+            {
+                try
+                {
+                    var guid = _pi.GetIpcSubscriber<int, Guid>(ep).InvokeFunc(0);
+                    if (guid != Guid.Empty) { _log.Debug("[GlamLevels] Got design GUID from {Ep}", ep); return guid; }
+                }
+                catch { }
+            }
+            // nint-based object pointer variants
+            var ptrEndpoints = new[] { "Glamourer.GetStateDesign", "Glamourer.GetCurrentDesign" };
+            foreach (var ep in ptrEndpoints)
+            {
+                try
+                {
+                    var guid = _pi.GetIpcSubscriber<nint, Guid>(ep).InvokeFunc(0);
+                    if (guid != Guid.Empty) { _log.Debug("[GlamLevels] Got design GUID from {Ep} (ptr)", ep); return guid; }
+                }
+                catch { }
+            }
+            return Guid.Empty;
         }
 
         // MD5 of sorted "Slot:ItemId" pairs — stable identifier for a given equipment loadout.

@@ -121,7 +121,7 @@ namespace GlamLevels
                         {
                             var names = string.Join(", ", designList.Values);
                             _chat.Print($"[GlamLevels] Could not detect design name. Your designs: {names}");
-                            _chat.Print($"[GlamLevels] Run: /glamlevel rename \"{saveName}\" \"<correct name>\"");
+                            _chat.Print($"[GlamLevels] While still on this design, run: /glamlevel identify \"<correct name>\"");
                         }
                     }
                 }
@@ -210,6 +210,20 @@ namespace GlamLevels
                         _chat.Print($"[GlamLevels] No snapshot named \"{parts[1]}\".");
                     break;
 
+                case "identify":
+                    // Lets the user name the design they currently have applied without needing
+                    // to remember the auto-generated date string from the auto-save message.
+                    if (parts.Length < 2) { _chat.Print("[GlamLevels] Usage: /glamlevel identify \"<design name>\""); return; }
+                    var (_, _, idHash) = _glamourer.GetCurrentDesignInfo();
+                    if (string.IsNullOrEmpty(idHash)) { _chat.Print("[GlamLevels] Cannot read current state — is Glamourer available?"); return; }
+                    var idKey = _snapshots.FindKeyByStateHash(idHash);
+                    if (idKey == null) { _chat.Print("[GlamLevels] No saved snapshot for the current design. Apply it first."); return; }
+                    if (_snapshots.Rename(idKey, parts[1]))
+                        _chat.Print($"[GlamLevels] Identified \"{idKey}\" → \"{parts[1]}\".");
+                    else
+                        _chat.Print($"[GlamLevels] A snapshot named \"{parts[1]}\" already exists.");
+                    break;
+
                 case "rename":
                     if (parts.Length < 3) { _chat.Print("[GlamLevels] Usage: /glamlevel rename \"<old name>\" \"<new name>\""); return; }
                     if (_snapshots.Rename(parts[1], parts[2]))
@@ -237,7 +251,7 @@ namespace GlamLevels
                     break;
 
                 default:
-                    _chat.Print("[GlamLevels] Commands: save <name> [collection] | fix [name] | update | list | rename <old> <new> | delete <name> | debug");
+                    _chat.Print("[GlamLevels] Commands: fix [name] | update | identify <name> | list | rename <old> <new> | delete <name> | save <name> [collection] | debug");
                     break;
             }
         }
