@@ -18,12 +18,10 @@ namespace GlamLevels.Services
         private readonly IPluginLog _log;
         private readonly IChatGui _chat;
         private readonly Action<nint, int> _handler;
-        private readonly Action<nint, int, Guid> _handlerWithGuid;
 
         public bool DebugMode { get; set; } = false;
 
-        // Fires when a design is applied. Guid is the design if Glamourer provided it; Guid.Empty otherwise.
-        public event Action<Guid> OnDesignApplied;
+        public event Action OnDesignApplied;
 
         public GlamourerIpc(IDalamudPluginInterface pi, IPluginLog log, IChatGui chat)
         {
@@ -31,51 +29,45 @@ namespace GlamLevels.Services
             _log = log;
             _chat = chat;
             _handler = OnStateChanged;
-            _handlerWithGuid = OnStateChangedWithGuid;
             Subscribe();
         }
 
         private void Subscribe()
         {
-            // Subscribe to both event signatures — newer Glamourer includes the design GUID as a 3rd
-            // parameter; older Glamourer fires only (nint, int). Dalamud invokes only the matching one.
-            try
-            {
-                _pi.GetIpcSubscriber<nint, int, Guid, object>(EventLabel).Subscribe(_handlerWithGuid);
-                _log.Info("[GlamLevels] Subscribed to {Label} (with GUID)", EventLabel);
-            }
-            catch (Exception ex)
-            {
-                _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label} (with GUID)", EventLabel);
-            }
-
             try
             {
                 _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Subscribe(_handler);
-                _log.Info("[GlamLevels] Subscribed to {Label} (2-param fallback)", EventLabel);
+                _log.Info("[GlamLevels] Subscribed to {Label}", EventLabel);
             }
             catch (Exception ex)
             {
-                _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label} (2-param)", EventLabel);
+                _log.Warning(ex, "[GlamLevels] Could not subscribe to {Label}", EventLabel);
             }
-        }
-
-        private void OnStateChangedWithGuid(nint objectPtr, int changeType, Guid designGuid)
-        {
-            if (DebugMode)
-                _chat.Print($"[GlamLevels] StateChangedWithType fired: changeType={changeType} guid={designGuid}");
-
-            if (changeType == StateChangeTypeDesign)
-                OnDesignApplied?.Invoke(designGuid);
         }
 
         private void OnStateChanged(nint objectPtr, int changeType)
         {
             if (DebugMode)
-                _chat.Print($"[GlamLevels] StateChangedWithType fired: changeType={changeType} (no guid)");
+                _chat.Print($"[GlamLevels] StateChangedWithType fired: changeType={changeType}");
 
             if (changeType == StateChangeTypeDesign)
-                OnDesignApplied?.Invoke(Guid.Empty);
+                OnDesignApplied?.Invoke();
+        }
+
+        // Returns name→guid map for all designs, for use in user-facing hints.
+        public Dictionary<Guid, string> GetAllDesignNames()
+        {
+            try
+            {
+                var list = _pi
+                    .GetIpcSubscriber<Dictionary<Guid, (string, string, uint, bool)>>("Glamourer.GetDesignListExtended")
+                    .InvokeFunc();
+                if (list == null) return new();
+                var result = new Dictionary<Guid, string>();
+                foreach (var (guid, info) in list) result[guid] = info.Item1;
+                return result;
+            }
+            catch { return new Dictionary<Guid, string>(); }
         }
 
         // Returns the set of all design GUIDs currently registered in Glamourer.
@@ -227,53 +219,49 @@ namespace GlamLevels.Services
             return default;
         }
 
-        public string GetMatchDiagnostics()
+        public void PrintMatchDiagnostics()
         {
             var designsDir = Path.Combine(_pi.ConfigDirectory.Parent.FullName, "Glamourer", "designs");
-            if (!Directory.Exists(designsDir))
-                return $"Designs dir NOT found: {designsDir}";
+            if (!Directory.Exists(designsDir)) { _chat.Print($"[GlamLevels] Designs dir NOT found: {designsDir}"); return; }
             var files = Directory.GetFiles(designsDir, "*.json");
-            if (files.Length == 0)
-                return $"Designs dir found but EMPTY: {designsDir}";
+            _chat.Print($"[GlamLevels] Designs dir: {files.Length} files");
 
             try
             {
-                var (ec, state) = _pi
-                    .GetIpcSubscriber<int, uint, (int, JObject)>("Glamourer.GetState")
-                    .InvokeFunc(0, 0u);
+                var (ec, state) = _pi.GetIpcSubscriber<int, uint, (int, JObject)>("Glamourer.GetState").InvokeFunc(0, 0u);
                 var stateEquipment = state?["Equipment"] as JObject;
-                if (stateEquipment == null)
-                    return $"{files.Length} design files found, but GetState returned no Equipment (ec={ec})";
+                if (stateEquipment == null) { _chat.Print($"[GlamLevels] GetState ec={ec}, no Equipment block"); return; }
 
-                int bestScore = 0;
-                int checkedCount = 0;
-                int applySlots = 0;
+                // Show the state's equipment structure
+                var stateKeys = string.Join(", ", System.Linq.Enumerable.Take(
+                    System.Linq.Enumerable.Select(stateEquipment.Properties(), p => p.Name), 4));
+                _chat.Print($"[GlamLevels] State equipment keys (first 4): {stateKeys}");
+
+                // Find first design with an Apply=true slot and print the comparison
                 foreach (var file in files)
                 {
                     if (!Guid.TryParse(Path.GetFileNameWithoutExtension(file), out _)) continue;
-                    checkedCount++;
                     var design = JObject.Parse(File.ReadAllText(file));
                     var designEquip = design["Equipment"] as JObject;
                     if (designEquip == null) continue;
-                    int score = 0; bool mismatch = false;
                     foreach (var prop in designEquip.Properties())
                     {
                         var dSlot = prop.Value as JObject;
                         if (dSlot?["Apply"]?.Value<bool>() != true) continue;
                         if (dSlot["ItemId"] == null) continue;
-                        applySlots++;
+                        var designItemId = dSlot["ItemId"];
                         var sSlot = stateEquipment[prop.Name] as JObject;
-                        if (sSlot == null || dSlot["ItemId"].Value<long>() != sSlot["ItemId"]?.Value<long>())
-                        { mismatch = true; break; }
-                        score++;
+                        var stateItemId = sSlot?["ItemId"];
+                        _chat.Print($"[GlamLevels] Example slot [{prop.Name}]: design ItemId={designItemId} | state ItemId={stateItemId ?? (object)"(slot not found)"}");
+                        _chat.Print($"[GlamLevels] Design slot keys: {string.Join(", ", System.Linq.Enumerable.Select(dSlot.Properties(), p => p.Name))}");
+                        return;
                     }
-                    if (!mismatch && score > bestScore) bestScore = score;
                 }
-                return $"{files.Length} design files, {checkedCount} valid GUIDs, {applySlots} apply-slots checked, best score={bestScore}";
+                _chat.Print("[GlamLevels] No Apply=true slots found in any design file");
             }
             catch (Exception ex)
             {
-                return $"{files.Length} design files found, match threw: {ex.Message}";
+                _chat.Print($"[GlamLevels] Diagnostics threw: {ex.Message}");
             }
         }
 
@@ -295,7 +283,6 @@ namespace GlamLevels.Services
 
         public void Dispose()
         {
-            try { _pi.GetIpcSubscriber<nint, int, Guid, object>(EventLabel).Unsubscribe(_handlerWithGuid); } catch { }
             try { _pi.GetIpcSubscriber<nint, int, object>(EventLabel).Unsubscribe(_handler); } catch { }
         }
     }

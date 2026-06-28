@@ -177,5 +177,14 @@ namespace GlamLevels.Services
             _config.Save();
             return true;
         }
+
+        public bool Rename(string oldName, string newName)
+        {
+            if (!_config.Snapshots.TryGetValue(oldName, out var snapshot)) return false;
+            _config.Snapshots.Remove(oldName);
+            _config.Snapshots[newName] = snapshot;
+            _config.Save();
+            return true;
+        }
     }
 }
