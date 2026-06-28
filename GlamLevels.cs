@@ -53,7 +53,7 @@ namespace GlamLevels
             _glamourer.OnDesignApplied += OnDesignApplied;
             _framework.Update += OnFrameworkUpdate;
 
-            _mainWindow = new MainWindow(Configuration, _snapshots, _penumbra);
+            _mainWindow = new MainWindow(Configuration, _snapshots, _penumbra, _glamourer);
             _windowSystem.AddWindow(_mainWindow);
 
             _commands.AddHandler(Command, new CommandInfo(OnCommand)
@@ -93,25 +93,31 @@ namespace GlamLevels
 
             try
             {
-                var (designGuid, designName) = _glamourer.GetCurrentDesignInfo();
+                var (designGuid, designName, stateHash) = _glamourer.GetCurrentDesignInfo();
                 var (collectionId, collectionName) = _penumbra.GetPlayerCollectionInfo();
 
-                if (designGuid != Guid.Empty && designName != null)
+                // Check both GUID (disk-matched) and state hash (always available)
+                var existingKey = (designGuid != Guid.Empty ? _snapshots.FindKeyByDesignGuid(designGuid) : null)
+                               ?? _snapshots.FindKeyByStateHash(stateHash);
+
+                if (existingKey != null)
                 {
-                    var existingKey = _snapshots.FindKeyByDesignGuid(designGuid);
-                    if (existingKey != null)
-                    {
-                        // Already saved — do nothing silently
-                        _log.Debug("[GlamLevels] Design '{Name}' already tracked as '{Key}', skipping auto-save", designName, existingKey);
-                        return;
-                    }
-                    // First time seeing this design — auto-snapshot and announce it
-                    _snapshots.Save(designName, collectionId, collectionName, designGuid, silent: false);
+                    _log.Debug("[GlamLevels] Design already tracked as '{Key}', skipping auto-save", existingKey);
+                    return;
+                }
+
+                if (!string.IsNullOrEmpty(stateHash))
+                {
+                    // Use design name from disk match, or a timestamp-based fallback
+                    var saveName = !string.IsNullOrEmpty(designName)
+                        ? designName
+                        : $"Design {DateTime.Now:MM/dd HH:mm}";
+                    _snapshots.Save(saveName, collectionId, collectionName, designGuid, stateHash, silent: false);
                 }
                 else
                 {
-                    // Could not identify design — save as [latest] silently as a fallback
-                    _log.Debug("[GlamLevels] Could not identify applied design, saving as [latest]");
+                    // Glamourer state unavailable — last-resort fallback
+                    _log.Debug("[GlamLevels] Could not read state, saving as [latest]");
                     _snapshots.Save(SnapshotService.LatestKey, collectionId, collectionName, silent: true);
                 }
             }
@@ -151,38 +157,31 @@ namespace GlamLevels
                 case "fix":
                     if (parts.Length >= 2)
                     {
-                        // Named restore
                         _snapshots.Restore(parts[1]);
                     }
                     else
                     {
-                        // Identify current design and restore its snapshot
-                        var (fixGuid, fixName) = _glamourer.GetCurrentDesignInfo();
-                        if (fixGuid != Guid.Empty)
-                        {
-                            var fixKey = _snapshots.FindKeyByDesignGuid(fixGuid);
-                            if (fixKey != null)
-                                _snapshots.Restore(fixKey);
-                            else
-                                _chat.Print($"[GlamLevels] No snapshot for the current design \"{fixName}\". Apply it first to auto-save priorities.");
-                        }
+                        var (fixGuid, fixName, fixHash) = _glamourer.GetCurrentDesignInfo();
+                        var fixKey = (fixGuid != Guid.Empty ? _snapshots.FindKeyByDesignGuid(fixGuid) : null)
+                                  ?? _snapshots.FindKeyByStateHash(fixHash);
+                        if (fixKey != null)
+                            _snapshots.Restore(fixKey);
+                        else if (!string.IsNullOrEmpty(fixHash))
+                            _chat.Print("[GlamLevels] No snapshot for the current design. Apply it first to auto-save priorities.");
                         else
-                        {
-                            // Fall back to [latest] if design can't be identified
                             _snapshots.Restore(SnapshotService.LatestKey);
-                        }
                     }
                     break;
 
                 case "update":
-                    var (upGuid, upName) = _glamourer.GetCurrentDesignInfo();
-                    if (upGuid == Guid.Empty)
+                    var (upGuid, upName, upHash) = _glamourer.GetCurrentDesignInfo();
+                    if (string.IsNullOrEmpty(upHash))
                     {
-                        _chat.Print("[GlamLevels] Cannot identify the current design. Apply a design first, then run /glamlevel update.");
+                        _chat.Print("[GlamLevels] Cannot read current state. Apply a design first, then run /glamlevel update.");
                         return;
                     }
                     var (upCid, upCname) = _penumbra.GetPlayerCollectionInfo();
-                    _snapshots.Update(upGuid, upCid, upCname);
+                    _snapshots.Update(upGuid, upHash, upCid, upCname);
                     break;
 
                 case "list":
@@ -205,8 +204,9 @@ namespace GlamLevels
                     _glamourer.DebugMode = !_glamourer.DebugMode;
                     _chat.Print($"[GlamLevels] Debug mode {(_glamourer.DebugMode ? "ON" : "OFF")}");
                     _chat.Print($"  Glamourer: {_glamourer.IsAvailable()}, Penumbra: {_penumbra.IsAvailable()}");
-                    var (dbgGuid, dbgName) = _glamourer.GetCurrentDesignInfo();
+                    var (dbgGuid, dbgName, dbgHash) = _glamourer.GetCurrentDesignInfo();
                     _chat.Print($"  Current design: \"{dbgName}\" ({dbgGuid})");
+                    _chat.Print($"  State hash: {dbgHash ?? "null"}");
                     _chat.Print($"  Match diagnostics: {_glamourer.GetMatchDiagnostics()}");
                     var (dbgCid, dbgCname) = _penumbra.GetPlayerCollectionInfo();
                     _chat.Print($"  Player collection: [{dbgCname}] ({dbgCid})");

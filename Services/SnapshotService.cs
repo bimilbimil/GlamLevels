@@ -26,7 +26,15 @@ namespace GlamLevels.Services
 
         public const string LatestKey = "[latest]";
 
-        public bool Save(string name, Guid collectionId, string collectionName, Guid designGuid = default, bool silent = false)
+        public string FindKeyByStateHash(string hash)
+        {
+            if (string.IsNullOrEmpty(hash)) return null;
+            foreach (var (key, snap) in _config.Snapshots)
+                if (snap.StateHash == hash) return key;
+            return null;
+        }
+
+        public bool Save(string name, Guid collectionId, string collectionName, Guid designGuid = default, string stateHash = null, bool silent = false)
         {
             var mods = _penumbra.GetMods();
             if (mods.Count == 0)
@@ -53,6 +61,7 @@ namespace GlamLevels.Services
                 Collection = collectionName,
                 CollectionGuid = collectionId == Guid.Empty ? null : collectionId.ToString(),
                 DesignGuid = designGuid == Guid.Empty ? null : designGuid.ToString(),
+                StateHash = stateHash,
                 Priorities = entries,
                 KnownMods = knownMods,
                 CapturedAt = DateTimeOffset.UtcNow.ToUnixTimeSeconds()
@@ -73,15 +82,15 @@ namespace GlamLevels.Services
             return null;
         }
 
-        public bool Update(Guid designGuid, Guid collectionId, string collectionName)
+        public bool Update(Guid designGuid, string stateHash, Guid collectionId, string collectionName)
         {
-            var key = FindKeyByDesignGuid(designGuid);
+            var key = FindKeyByDesignGuid(designGuid) ?? FindKeyByStateHash(stateHash);
             if (key == null)
             {
                 _chat.Print("[GlamLevels] No saved snapshot for the current design. Apply the design first to auto-save it.");
                 return false;
             }
-            return Save(key, collectionId, collectionName, designGuid, silent: false);
+            return Save(key, collectionId, collectionName, designGuid, stateHash, silent: false);
         }
 
         public bool Restore(string name)

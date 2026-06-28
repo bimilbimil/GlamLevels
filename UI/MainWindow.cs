@@ -13,13 +13,15 @@ namespace GlamLevels.UI
         private readonly Configuration _config;
         private readonly SnapshotService _snapshots;
         private readonly PenumbraIpc _penumbra;
+        private readonly GlamourerIpc _glamourer;
 
-        public MainWindow(Configuration config, SnapshotService snapshots, PenumbraIpc penumbra)
+        public MainWindow(Configuration config, SnapshotService snapshots, PenumbraIpc penumbra, GlamourerIpc glamourer)
             : base("Glam Levels")
         {
             _config = config;
             _snapshots = snapshots;
             _penumbra = penumbra;
+            _glamourer = glamourer;
             SizeConstraints = new WindowSizeConstraints
             {
                 MinimumSize = new Vector2(460, 260),
@@ -80,8 +82,8 @@ namespace GlamLevels.UI
                     if (collId == Guid.Empty)
                         collId = _penumbra.ResolveCollectionGuid(snapshot.Collection);
 
-                    Guid.TryParse(snapshot.DesignGuid ?? "", out var designGuid);
-                    _snapshots.Save(name, collId, snapshot.Collection, designGuid);
+                    var (curGuid, _, curHash) = _glamourer.GetCurrentDesignInfo();
+                    _snapshots.Save(name, collId, snapshot.Collection, curGuid, curHash);
                 }
                 ImGui.SameLine();
 

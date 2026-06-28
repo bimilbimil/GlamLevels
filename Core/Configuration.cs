@@ -18,6 +18,8 @@ namespace GlamLevels.Core
         public string Collection { get; set; } = "Default";
         public string CollectionGuid { get; set; } = null;
         public string DesignGuid { get; set; } = null;
+        // MD5 hash of equipment ItemIds at save time — used for identification when disk matching fails
+        public string StateHash { get; set; } = null;
         // Non-zero priority mods only — all others were 0 at save time
         public List<ModPriorityEntry> Priorities { get; set; } = new();
         // Indices (into ModIndex) of every mod that existed when this snapshot was taken.

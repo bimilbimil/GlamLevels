@@ -64,9 +64,10 @@ namespace GlamLevels.Services
             catch { return false; }
         }
 
-        // Returns the GUID and display name of the design currently applied to the local player,
-        // by comparing the live state equipment slots against Glamourer's design files on disk.
-        public (Guid DesignGuid, string DesignName) GetCurrentDesignInfo()
+        // Returns the GUID, display name, and state hash for the current design.
+        // StateHash is always populated when GetState succeeds — it is the primary fallback identifier
+        // when disk-based GUID matching fails (e.g. designs with no Apply=true equipment slots).
+        public (Guid DesignGuid, string DesignName, string StateHash) GetCurrentDesignInfo()
         {
             try
             {
@@ -83,13 +84,26 @@ namespace GlamLevels.Services
                 var stateEquipment = state["Equipment"] as JObject;
                 if (stateEquipment == null) return default;
 
-                return MatchDesignFromDisk(stateEquipment);
+                var hash = ComputeStateHash(stateEquipment);
+                var (guid, name) = MatchDesignFromDisk(stateEquipment);
+                return (guid, name, hash);
             }
             catch (Exception ex)
             {
                 _log.Warning(ex, "[GlamLevels] GetCurrentDesignInfo failed");
                 return default;
             }
+        }
+
+        // MD5 of sorted "Slot:ItemId" pairs — stable identifier for a given equipment loadout.
+        private static string ComputeStateHash(JObject equipment)
+        {
+            var sorted = new SortedDictionary<string, long>(StringComparer.Ordinal);
+            foreach (var prop in equipment.Properties())
+                sorted[prop.Name] = (prop.Value as JObject)?["ItemId"]?.Value<long>() ?? 0;
+            var raw = string.Join(";", System.Linq.Enumerable.Select(sorted, kv => $"{kv.Key}:{kv.Value}"));
+            var bytes = System.Security.Cryptography.MD5.HashData(System.Text.Encoding.UTF8.GetBytes(raw));
+            return Convert.ToHexString(bytes);
         }
 
         // Scans Glamourer design files on disk and finds the one whose applied equipment
