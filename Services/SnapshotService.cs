@@ -34,6 +34,13 @@ namespace GlamLevels.Services
             return null;
         }
 
+        // Direct name lookup — used as fallback when hash has drifted (e.g. non-design slots differ between sessions)
+        public string FindKeyByName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return null;
+            return _config.Snapshots.ContainsKey(name) ? name : null;
+        }
+
         public bool Save(string name, Guid collectionId, string collectionName, Guid designGuid = default, string stateHash = null, bool silent = false)
         {
             var mods = _penumbra.GetMods();
@@ -181,6 +188,19 @@ namespace GlamLevels.Services
         public bool Rename(string oldName, string newName)
         {
             if (!_config.Snapshots.TryGetValue(oldName, out var snapshot)) return false;
+            _config.Snapshots.Remove(oldName);
+            _config.Snapshots[newName] = snapshot;
+            _config.Save();
+            return true;
+        }
+
+        // Like Rename but also stamps the snapshot with the resolved Glamourer design GUID,
+        // so future applies can match by GUID even for old-format designs.
+        public bool Identify(string oldName, Guid designGuid, string newName)
+        {
+            if (!_config.Snapshots.TryGetValue(oldName, out var snapshot)) return false;
+            if (designGuid != Guid.Empty)
+                snapshot.DesignGuid = designGuid.ToString();
             _config.Snapshots.Remove(oldName);
             _config.Snapshots[newName] = snapshot;
             _config.Save();

@@ -102,8 +102,10 @@ namespace GlamLevels
                 if (_glamourer.DebugMode)
                     _chat.Print($"[GlamLevels]   designGuid={designGuid}  name=\"{designName ?? "(null)"}\"  hash={stateHash ?? "null"}  collection={collectionName}");
 
+                // Look up by GUID, then hash, then exact name match (fallback for hash drift on old designs)
                 var existingKey = (designGuid != Guid.Empty ? _snapshots.FindKeyByDesignGuid(designGuid) : null)
-                               ?? _snapshots.FindKeyByStateHash(stateHash);
+                               ?? _snapshots.FindKeyByStateHash(stateHash)
+                               ?? (!string.IsNullOrEmpty(designName) ? _snapshots.FindKeyByName(designName) : null);
 
                 if (existingKey != null)
                 {
@@ -112,6 +114,9 @@ namespace GlamLevels
                     _log.Debug("[GlamLevels] Design already tracked as '{Key}', skipping auto-save", existingKey);
                     return;
                 }
+
+                if (_glamourer.DebugMode)
+                    _chat.Print($"[GlamLevels]   No match found (guid={designGuid}, hash={stateHash?.Substring(0, 8)}..., name={designName ?? "null"}) — will create new entry.");
 
                 if (!string.IsNullOrEmpty(stateHash))
                 {
@@ -219,8 +224,12 @@ namespace GlamLevels
                     if (string.IsNullOrEmpty(idHash)) { _chat.Print("[GlamLevels] Cannot read current state — is Glamourer available?"); return; }
                     var idKey = _snapshots.FindKeyByStateHash(idHash);
                     if (idKey == null) { _chat.Print("[GlamLevels] No saved snapshot for the current design. Apply it first."); return; }
-                    if (_snapshots.Rename(idKey, idName))
-                        _chat.Print($"[GlamLevels] Identified \"{idKey}\" → \"{idName}\".");
+                    // Resolve the Glamourer GUID for this design name so future applies can match by GUID
+                    var idAllDesigns = _glamourer.GetAllDesignNames();
+                    var idGuid = Guid.Empty;
+                    foreach (var (g, n) in idAllDesigns) if (n == idName) { idGuid = g; break; }
+                    if (_snapshots.Identify(idKey, idGuid, idName))
+                        _chat.Print($"[GlamLevels] Identified \"{idKey}\" → \"{idName}\"." + (idGuid != Guid.Empty ? " (GUID stored)" : ""));
                     else
                         _chat.Print($"[GlamLevels] A snapshot named \"{idName}\" already exists.");
                     break;

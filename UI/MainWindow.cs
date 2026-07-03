@@ -20,8 +20,8 @@ namespace GlamLevels.UI
         private Dictionary<Guid, string> _validDesigns = new();
         private DateTimeOffset _validDesignsRefreshedAt = DateTimeOffset.MinValue;
 
-        // Pending rename from the identify dropdown (deferred so we don't modify collection mid-loop)
-        private (string OldName, string NewName)? _pendingRename;
+        // Pending identify from the dropdown (deferred so we don't modify collection mid-loop)
+        private (string OldName, Guid DesignGuid, string NewName)? _pendingIdentify;
 
         public MainWindow(Configuration config, SnapshotService snapshots, PenumbraIpc penumbra, GlamourerIpc glamourer)
             : base("Glam Levels")
@@ -124,10 +124,10 @@ namespace GlamLevels.UI
                     ImGui.SetNextItemWidth(140);
                     if (ImGui.BeginCombo($"##{name}_identify", "Identify..."))
                     {
-                        foreach (var (_, designName) in _validDesigns)
+                        foreach (var (dGuid, dName) in _validDesigns)
                         {
-                            if (ImGui.Selectable(designName))
-                                _pendingRename = (name, designName);
+                            if (ImGui.Selectable(dName))
+                                _pendingIdentify = (name, dGuid, dName);
                         }
                         ImGui.EndCombo();
                     }
@@ -143,10 +143,10 @@ namespace GlamLevels.UI
             if (toDelete != null)
                 _snapshots.Delete(toDelete);
 
-            if (_pendingRename.HasValue)
+            if (_pendingIdentify.HasValue)
             {
-                _snapshots.Rename(_pendingRename.Value.OldName, _pendingRename.Value.NewName);
-                _pendingRename = null;
+                _snapshots.Identify(_pendingIdentify.Value.OldName, _pendingIdentify.Value.DesignGuid, _pendingIdentify.Value.NewName);
+                _pendingIdentify = null;
             }
         }
 
