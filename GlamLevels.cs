@@ -116,7 +116,15 @@ namespace GlamLevels
                 }
 
                 if (_glamourer.DebugMode)
-                    _chat.Print($"[GlamLevels]   No match found (guid={designGuid}, hash={stateHash?.Substring(0, 8)}..., name={designName ?? "null"}) — will create new entry.");
+                {
+                    _chat.Print($"[GlamLevels]   No match found. Computed hash: {stateHash?.Substring(0, 12) ?? "null"}...");
+                    foreach (var (sn, ss) in _snapshots.GetAll())
+                    {
+                        var storedHash = ss.StateHash?.Substring(0, 12) ?? "(none)";
+                        var storedGuid = ss.DesignGuid ?? "(none)";
+                        _chat.Print($"[GlamLevels]     \"{sn}\" guid={storedGuid[..Math.Min(8, storedGuid.Length)]}... hash={storedHash}...");
+                    }
+                }
 
                 if (!string.IsNullOrEmpty(stateHash))
                 {

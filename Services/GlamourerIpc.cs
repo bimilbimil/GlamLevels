@@ -160,27 +160,19 @@ namespace GlamLevels.Services
         // currently applied to the local player. Returns Guid.Empty if none work.
         private Guid TryGetAppliedDesignGuid()
         {
-            // int-based object index (0 = local player)
             var intEndpoints = new[] { "Glamourer.GetStateDesign", "Glamourer.GetCurrentDesign", "Glamourer.GetAppliedDesign" };
             foreach (var ep in intEndpoints)
             {
                 try
                 {
                     var guid = _pi.GetIpcSubscriber<int, Guid>(ep).InvokeFunc(0);
-                    if (guid != Guid.Empty) { _log.Debug("[GlamLevels] Got design GUID from {Ep}", ep); return guid; }
+                    if (DebugMode) _chat.Print($"[GlamLevels]   {ep}(0) → {guid}");
+                    if (guid != Guid.Empty) return guid;
                 }
-                catch { }
-            }
-            // nint-based object pointer variants
-            var ptrEndpoints = new[] { "Glamourer.GetStateDesign", "Glamourer.GetCurrentDesign" };
-            foreach (var ep in ptrEndpoints)
-            {
-                try
+                catch (Exception ex)
                 {
-                    var guid = _pi.GetIpcSubscriber<nint, Guid>(ep).InvokeFunc(0);
-                    if (guid != Guid.Empty) { _log.Debug("[GlamLevels] Got design GUID from {Ep} (ptr)", ep); return guid; }
+                    if (DebugMode) _chat.Print($"[GlamLevels]   {ep} threw: {ex.Message}");
                 }
-                catch { }
             }
             return Guid.Empty;
         }
