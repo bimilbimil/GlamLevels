@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Numerics;
 using Dalamud.Bindings.ImGui;
 using Dalamud.Interface.Windowing;
@@ -124,7 +125,7 @@ namespace GlamLevels.UI
                     ImGui.SetNextItemWidth(140);
                     if (ImGui.BeginCombo($"##{name}_identify", "Identify..."))
                     {
-                        foreach (var (dGuid, dName) in _validDesigns)
+                        foreach (var (dGuid, dName) in _validDesigns.OrderBy(kv => kv.Value, StringComparer.OrdinalIgnoreCase))
                         {
                             if (ImGui.Selectable(dName))
                                 _pendingIdentify = (name, dGuid, dName);
